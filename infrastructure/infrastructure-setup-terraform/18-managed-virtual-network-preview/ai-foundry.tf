@@ -19,13 +19,13 @@ resource "azapi_resource" "cognitive_account" {
     properties = merge(
       {
         allowProjectManagement = true
-        apiProperties        = {}
-        customSubDomainName  = local.foundry_name
-        disableLocalAuth     = true
+        apiProperties          = {}
+        customSubDomainName    = local.foundry_name
+        disableLocalAuth       = true
         networkAcls = {
-          defaultAction         = "Deny"
-          virtualNetworkRules   = []
-          ipRules               = []
+          defaultAction       = "Deny"
+          virtualNetworkRules = []
+          ipRules             = []
         }
         networkInjections = [
           {
@@ -148,6 +148,7 @@ resource "azapi_resource" "managed_network" {
       managedNetwork = {
         isolationMode      = "AllowInternetOutbound"
         managedNetworkKind = "V2"
+        provisionNetworkNow = true
       }
     }
   }
@@ -380,6 +381,10 @@ resource "azapi_resource" "conn_cosmosdb" {
       }
     }
   }
+
+  depends_on = [
+    azapi_resource.conn_aisearch
+  ]
 }
 
 # Connection: Storage Account
@@ -403,6 +408,10 @@ resource "azapi_resource" "conn_storage" {
       }
     }
   }
+
+  depends_on = [
+    azapi_resource.conn_cosmosdb
+  ]
 }
 
 # Local variable to format project workspace ID as GUID
@@ -411,7 +420,7 @@ resource "azapi_resource" "conn_storage" {
 locals {
   # Extract the workspace ID from the project output
   project_workspace_id_raw = try(jsondecode(azapi_resource.ai_foundry_project.output).properties.internalId, "")
-  
+
   # Format as GUID if we have a valid 32-character string
   project_workspace_id_guid = length(local.project_workspace_id_raw) == 32 ? format(
     "%s-%s-%s-%s-%s",
@@ -431,7 +440,7 @@ resource "azurerm_role_assignment" "project_storage_blob_owner_containers" {
   scope                = azurerm_storage_account.main[0].id
   role_definition_name = "Storage Blob Data Owner"
   principal_id         = azapi_resource.ai_foundry_project.identity[0].principal_id
-  
+
   # ABAC condition matching Bicep template
   condition         = "((!(ActionMatches{'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/tags/read'}) AND !(ActionMatches{'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/filter/action'}) AND !(ActionMatches{'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/tags/write'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringStartsWithIgnoreCase '${local.project_workspace_id_guid}' AND @Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringLikeIgnoreCase '*-azureml-agent'))"
   condition_version = "2.0"
@@ -447,10 +456,10 @@ resource "azurerm_cosmosdb_sql_role_assignment" "project_cosmos_builtin_contribu
   count               = var.enable_cosmos ? 1 : 0
   resource_group_name = azurerm_resource_group.main.name
   account_name        = azurerm_cosmosdb_account.main[0].name
-  
+
   # Cosmos DB Built-in Data Contributor role
   role_definition_id = "${azurerm_cosmosdb_account.main[0].id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
-  
+
   principal_id = azapi_resource.ai_foundry_project.identity[0].principal_id
   scope        = azurerm_cosmosdb_account.main[0].id
 
